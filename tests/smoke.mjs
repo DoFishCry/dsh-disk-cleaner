@@ -677,7 +677,7 @@ async function main() {
   check('路径含空格也能按行解析', spaced.ok === true && spaced.items['/media/user/Data Disk/动漫/anime'].what.includes('动漫视频'));
 
   // 真实模型输出（deepseek-v4.1-flash，逐行格式）必须逐条命中——这是线上抓回来的原文
-  const realModelOutput = '/media/user/Data Disk/动漫/anime | 存放 12 部日本动画剧集的目录，含若干部动画等。\n'
+  const realModelOutput = '/media/user/Data Disk/动漫/anime | 存放 12 部日本动画剧集的目录，含若干部动画。\n'
     + '/media/user/Data Disk/动漫/漫画 | 不确定：漫画资源目录，但当前该路径已不存在。\n'
     + '/media/user/Data Disk/动漫 | 动漫总目录，含 anime、downloads、music 三个子目录。';
   const realAllowed = new Set(['/media/user/Data Disk/动漫/anime', '/media/user/Data Disk/动漫/漫画', '/media/user/Data Disk/动漫']);

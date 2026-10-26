@@ -11,12 +11,50 @@
  */
 
 import { promises as fsp } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.join(here, '..');
-const THEME = '/home/user/.npm/_npx/b5c6312874079fe8/node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js';
+
+// ── 宿主主题包的定位
+// 这个文件在每台机器上的位置都不同（安装在 ~/dsh/app/<ver>、npx 缓存、或别处），
+// 所以不写死路径，按以下顺序找；找到第一个就用。
+async function findTheme() {
+  const RELLIB = path.join('node_modules', '@deepseek-ai', 'dsh-client-ui-theme', 'lib', 'client.js');
+  const candidates = [];
+  if (process.env.DSH_THEME_PATH) candidates.push(process.env.DSH_THEME_PATH);
+  try {
+    candidates.push(createRequire(import.meta.url).resolve('@deepseek-ai/dsh-client-ui-theme/lib/client.js'));
+  } catch { /* 仓库里没装这个包，正常 */ }
+  const homes = [path.join(os.homedir(), 'dsh', 'app'), path.join(os.homedir(), '.dsh', 'app')];
+  for (const base of homes) {
+    try {
+      for (const ver of await fsp.readdir(base)) candidates.push(path.join(base, ver, RELLIB));
+    } catch { /* 没有这个目录 */ }
+  }
+  try {
+    const npx = path.join(os.homedir(), '.npm', '_npx');
+    for (const dir of await fsp.readdir(npx)) candidates.push(path.join(npx, dir, RELLIB));
+  } catch { /* 没有 npx 缓存 */ }
+  for (const file of candidates) {
+    try { await fsp.access(file); return file; } catch { /* 试下一个 */ }
+  }
+  return null;
+}
+
+const THEME = await findTheme();
+if (!THEME) {
+  console.error([
+    '找不到宿主主题包 @deepseek-ai/dsh-client-ui-theme —— UI 审计需要它来取真实的明/暗色 token。',
+    '修法：装过 DSH 的机器上通常能自动找到；否则显式指定：',
+    '  DSH_THEME_PATH=/path/to/node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js node tests/ui-audit.mjs',
+  ].join('\n'));
+  process.exit(1);
+}
+console.log(`主题包：${THEME}`);
 
 let failures = 0;
 let checks = 0;

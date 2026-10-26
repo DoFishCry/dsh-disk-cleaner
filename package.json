@@ -4,6 +4,24 @@
   "private": true,
   "type": "module",
   "description": "GarbageMaster: a Linux disk-space scanner, rule-based explainer, and guarded cleanup console for the DSH Web UI.",
+  "license": "CC-BY-NC-4.0",
+  "author": "DoFishCry",
+  "homepage": "https://github.com/DoFishCry/dsh-disk-cleaner#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DoFishCry/dsh-disk-cleaner.git"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "disk-cleaner",
+    "disk-space",
+    "linux"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -19,6 +37,12 @@
     "locale/*.json",
     "icon.svg"
   ],
+  "scripts": {
+    "test": "node tests/smoke.mjs",
+    "test:render": "node tests/render.mjs",
+    "test:ui": "node tests/ui-audit.mjs",
+    "test:all": "node tests/smoke.mjs && node tests/render.mjs && node tests/ui-audit.mjs"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

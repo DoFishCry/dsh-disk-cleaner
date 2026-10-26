@@ -5,3 +5,6 @@ tests/.fixture-*
 Thumbs.db
 *.tmp
 *.swp
+.garbage-master/
+.env
+*.orig

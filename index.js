@@ -172,6 +172,13 @@ async function diskUsageOf(root) {
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {object} rawConfig patch 行里的 config（本插件不声明 Config schema，这里手工合并默认值）
  */
+/** 本地日期 YYYY-MM-DD（toISOString 取的是 UTC，凌晨会差一天）。 */
+function localDayKey(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 export async function apply(ctx, rawConfig = {}) {
   const config = {
     ...DEFAULTS,
@@ -712,7 +719,7 @@ export async function apply(ctx, rawConfig = {}) {
         } catch { /* 诊断写不了不影响主流程 */ }
       };
       try {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = localDayKey();
         const resolved = await ensureBoundWorkspace();
         if (resolved.ok) {
           const ensured = await sessionBridge.ensureSession({ kind: 'explain', workspace: resolved.workspace, today });
@@ -779,7 +786,7 @@ export async function apply(ctx, rawConfig = {}) {
     if (!built.ok) return { ok: false, error: built.error, detail: built };
     const plan = built.plan;
     const target = store.targets.find((t) => t.id === targetId) || null;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDayKey();
     const ensured = await sessionBridge.ensureSession({ kind: 'explain', workspace: resolved.workspace, today, title: `GarbageMaster · ${today}` });
     if (!ensured.ok) return { ok: false, error: `会话不可用：${ensured.reason}` };
 
@@ -857,7 +864,7 @@ export async function apply(ctx, rawConfig = {}) {
     const text = buildExecutePrompt({ planPath: planPathIn, planId });
     const prompted = await sessionBridge.prompt(sessionId, text);
     if (!prompted.ok) return { ok: false, error: `发送执行指令失败：${prompted.reason}` };
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDayKey();
     await sessionBridge.noteActivity({ kind: 'write', sessionId, today });
     return {
       ok: true, sessionId, permission, planMode, preset,
