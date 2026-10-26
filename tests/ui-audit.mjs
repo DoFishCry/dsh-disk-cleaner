@@ -443,6 +443,34 @@ checks += 1;
 }
 
 /* DOC-SPLIT */
+console.log('\n计划在右栏 + 清单零 LLM（r20）');
+checks += 1;
+if (/const planCard = sessionPlanState/.test(clientSource) && /gm-card--plan/.test(css) && /planCard \|\| h\('div', \{ className: 'gm-col-inner'/.test(clientSource)) console.log('  ✓ 计划文档显示在 GM 面板自己的右栏（不是弹窗）');
+else { failures += 1; console.log('  ✗ 计划仍走弹窗'); }
+
+checks += 1;
+if (!/sessionPlanModal/.test(clientSource)) console.log('  ✓ 旧的计划弹窗已移除（无死代码）');
+else { failures += 1; console.log('  ✗ 还残留旧计划弹窗'); }
+
+checks += 1;
+{
+  const hostHttp = await fsp.readFile(path.join(repo, 'host', 'http.js'), 'utf8');
+  const planRoute = hostHttp.slice(hostHttp.indexOf("'POST /api/plan'"), hostHttp.indexOf("'POST /api/submit'"));
+  if (!/requestAiPlan/.test(planRoute) && /deterministic-only/.test(planRoute)) console.log('  ✓ 提交清单零 LLM 调用（纯确定性）');
+  else { failures += 1; console.log('  ✗ /api/plan 仍在调用 LLM'); }
+}
+
+checks += 1;
+{
+  const idx = await fsp.readFile(path.join(repo, 'index.js'), 'utf8');
+  if (/degraded: true/.test(idx) && /planPermission/.test(idx)) console.log('  ✓ planMode 缺失时降级为只读权限预设');
+  else { failures += 1; console.log('  ✗ 缺 planMode 降级'); }
+  checks += 1;
+  if (/explain-session-last\.json/.test(idx)) console.log('  ✓ 解释写会话失败会落盘原因（explain-session-last.json）');
+  else { failures += 1; console.log('  ✗ 解释写会话失败仍静默'); }
+}
+
+/* DOC-SPLIT */
 console.log('\n元素与样式一致性');
 const defined = new Set();
 for (const m of css.matchAll(/\.(gm-[a-z0-9-]+)/g)) defined.add(m[1]);

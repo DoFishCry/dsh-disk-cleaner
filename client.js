@@ -89,7 +89,7 @@ window.__ModuleLoader__.load({
         sessionPlanEmpty: '会话没有返回计划内容', sessionPlanConfirm: '确认并执行',
         sessionExecuteConfirmTitle: '确认执行这份计划？', sessionExecuteConfirmBody: '确认后会在同一个会话里退出计划模式、放宽权限并按计划执行（可能包含不可逆的删除）。请先读完上面的计划。',
         sessionExecuteGo: '确认执行', sessionExecuted: '已把执行指令发给会话，进度请在该会话里查看。',
-        sessionPlanPreset: '权限', sessionPlanFailed: '生成计划失败', sessionExecuteFailed: '执行失败',
+        sessionPlanPreset: '权限', planModeDegraded: '（计划模式不可用，已用只读权限约束）', sessionPlanFailed: '生成计划失败', sessionExecuteFailed: '执行失败',
         setWorkspace: '绑定工作区（计划/执行会话所在）', setPlanSession: '用会话生成执行计划（替换快速计划）',
         setExplainModel: '解释/计划使用的模型', modelFollowSession: '跟随默认模型',
         auditTitle: '审计：历史清理记录', auditIntro: '每次运行一条记录（谁授权、哪个执行者、删了哪些路径、多少字节、成败）。文件在 ~/.dsh/garbage-master/audit/。',
@@ -183,7 +183,7 @@ window.__ModuleLoader__.load({
         sessionPlanEmpty: 'The session returned no plan', sessionPlanConfirm: 'Confirm and run',
         sessionExecuteConfirmTitle: 'Run this plan?', sessionExecuteConfirmBody: 'The same session will exit plan mode, widen permissions and execute the plan (may include irreversible deletes). Read the plan above first.',
         sessionExecuteGo: 'Run it', sessionExecuted: 'Execution instruction sent to the session; watch progress there.',
-        sessionPlanPreset: 'permissions', sessionPlanFailed: 'Failed to generate plan', sessionExecuteFailed: 'Execution failed',
+        sessionPlanPreset: 'permissions', planModeDegraded: ' (plan mode unavailable; read-only enforced)', sessionPlanFailed: 'Failed to generate plan', sessionExecuteFailed: 'Execution failed',
         setWorkspace: 'Bound workspace (plan/execute session)', setPlanSession: 'Use a session to plan (replaces quick plan)',
         setExplainModel: 'Model for explain/plan', modelFollowSession: 'Follow default model',
         auditTitle: 'Audit: cleanup history', auditIntro: 'One record per run (who authorized, which executor, which paths, bytes, outcome). Files live in ~/.dsh/garbage-master/audit/.',
@@ -500,6 +500,9 @@ body[data-ds-dark-theme] .gm-root{--gm-shadow:0 1px 3px rgba(0,0,0,.4),0 4px 16p
   box-shadow:var(--gm-shadow);display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .gm-cardhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 12px;min-height:42px;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .gm-card--current{flex:0 0 auto;max-height:52%}
+.gm-col-inner{display:flex;flex-direction:column;gap:12px;min-height:0;height:100%}
+.gm-card--plan{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.gm-plan-body{overflow:auto;flex:1 1 auto;min-height:0}
 .gm-cardfoot{flex:0 0 auto;display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:8px 12px;border-top:1px solid var(--dsw-alias-border-l1)}
 .gm-cardhead b{font-size:13px;font-weight:650}
 .gm-cardbody{flex:1;min-height:0;overflow:auto;padding:10px 12px}
@@ -1798,37 +1801,13 @@ input[type=checkbox]{accent-color:var(--gm-accent);width:14px;height:14px;margin
           : null
       );
 
-      const sessionPlanModal = sessionPlanState ? h('div', { className: 'gm-overlay', onClick: (e) => { if (e.target === e.currentTarget) setSessionPlanState(null); } },
-        h('div', { className: 'gm-modal gm-modal-wide', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('sessionPlanTitle') },
-          h('h2', null, t('sessionPlanTitle')),
-          h('div', { className: 'gm-meta', style: { marginTop: 4 } },
-            h('span', { className: 'gm-t2' }, `${t('sessionPlanSession')} `, h('code', null, sessionPlanState.sessionId)),
-            h('span', { className: 'gm-t3' }, `${t('sessionPlanPlan')} ${sessionPlanState.planId}`),
-            h('span', { className: 'gm-t2' }, `${t('size')} ${fmtBytes(sessionPlanState.totals ? sessionPlanState.totals.bytes : 0)}`),
-            sessionPlanState.workspace ? h('span', { className: 'gm-t3' }, `${t('sessionPlanWorkspace')} ${sessionPlanState.workspace.title || sessionPlanState.workspace.path}`) : null,
-            h('span', { className: 'gm-t3' }, sessionPlanState.planSource === 'file' ? t('sessionPlanFromFile') : t('sessionPlanFromSession'))),
-          sessionNotice ? h('div', { className: 'gm-warn', style: { marginTop: 8 } }, sessionNotice) : null,
-          h('div', { className: 'gm-md', style: { marginTop: 10, maxHeight: '52vh', overflow: 'auto' } },
-            sessionPlanState.markdown
-              ? renderMarkdown(sessionPlanState.markdown)
-              : h('div', { className: 'gm-empty' }, t('sessionPlanEmpty'))),
-          sessionPlanState.executed
-            ? h('div', { className: 'gm-ok', style: { marginTop: 10 } },
-              `${t('sessionExecuted')}${sessionPlanState.preset ? `（${t('sessionPlanPreset')} ${sessionPlanState.preset}）` : ''}`)
-            : null,
+      const sessionConfirmModal = sessionConfirm && sessionPlanState ? h('div', { className: 'gm-overlay gm-overlay-top', onClick: (e) => { if (e.target === e.currentTarget) setSessionConfirm(false); } },
+        h('div', { className: 'gm-modal', style: { width: 520 }, role: 'dialog', 'aria-modal': 'true', 'aria-label': t('sessionExecuteConfirmTitle') },
+          h('h2', null, t('sessionExecuteConfirmTitle')),
+          h('div', { className: 'gm-note' }, t('sessionExecuteConfirmBody')),
           h('div', { className: 'gm-h1', style: { justifyContent: 'flex-end', marginTop: 14 } },
-            h('button', { className: 'gm-btn', onClick: () => setSessionPlanState(null) }, sessionPlanState.executed ? t('cancelBtn') : t('planBack')),
-            sessionPlanState.executed ? null : h('button', {
-              className: 'gm-btn gm-danger',
-              onClick: () => setSessionConfirm(true)
-            }, t('sessionPlanConfirm'))),
-          sessionConfirm ? h('div', { className: 'gm-overlay', onClick: (e) => { if (e.target === e.currentTarget) setSessionConfirm(false); } },
-            h('div', { className: 'gm-modal', style: { width: 520 }, role: 'dialog', 'aria-modal': 'true', 'aria-label': t('sessionExecuteConfirmTitle') },
-              h('h2', null, t('sessionExecuteConfirmTitle')),
-              h('div', { className: 'gm-note' }, t('sessionExecuteConfirmBody')),
-              h('div', { className: 'gm-h1', style: { justifyContent: 'flex-end', marginTop: 14 } },
-                h('button', { className: 'gm-btn', onClick: () => setSessionConfirm(false) }, t('cancelBtn')),
-                h('button', { className: 'gm-btn gm-danger', onClick: sessionExecute }, t('sessionExecuteGo'))))) : null)) : null;
+            h('button', { className: 'gm-btn', onClick: () => setSessionConfirm(false) }, t('cancelBtn')),
+            h('button', { className: 'gm-btn gm-danger', onClick: sessionExecute }, t('sessionExecuteGo'))))) : null;
 
       const auditModal = auditOpen ? h('div', { className: 'gm-overlay gm-overlay-top', onClick: (e) => { if (e.target === e.currentTarget) setAuditOpen(false); } },
         h('div', { className: 'gm-modal gm-modal-wide', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('auditTitle') },
@@ -2040,18 +2019,49 @@ input[type=checkbox]{accent-color:var(--gm-accent);width:14px;height:14px;margin
             }, t('finalRun')))
         )) : null;
 
+      // ── 右栏：会话生成的计划文档（可读渲染，不显示 Markdown 源码）──────────
+      const planCard = sessionPlanState ? h('div', { className: 'gm-card gm-card--plan' },
+        h('div', { className: 'gm-cardhead' },
+          h('b', null, t('sessionPlanTitle')),
+          sessionPlanning ? h('span', { className: 'gm-spin' }) : null,
+          h('div', { className: 'gm-spacer' }),
+          h('span', { className: 'gm-t3', title: sessionPlanState.sessionId }, sessionPlanState.planId),
+          h('button', { className: 'gm-mini always', onClick: () => { setSessionPlanState(null); setSessionConfirm(false); } }, t('planBack'))
+        ),
+        h('div', { className: 'gm-cardbody gm-plan-body' },
+          h('div', { className: 'gm-meta', style: { marginBottom: 8 } },
+            h('span', { className: 'gm-t3' }, `${t('size')} ${fmtBytes(sessionPlanState.totals ? sessionPlanState.totals.bytes : 0)}`),
+            sessionPlanState.workspace ? h('span', { className: 'gm-t3' }, sessionPlanState.workspace.title || sessionPlanState.workspace.path) : null,
+            h('span', { className: 'gm-t3' }, sessionPlanState.planSource === 'file' ? t('sessionPlanFromFile') : t('sessionPlanFromSession')),
+            sessionPlanState.planMode && sessionPlanState.planMode.degraded
+              ? h('span', { className: 'gm-t3', title: sessionPlanState.planMode.reason }, t('planModeDegraded'))
+              : null),
+          sessionNotice ? h('div', { className: 'gm-warn' }, sessionNotice) : null,
+          sessionPlanState.executed
+            ? h('div', { className: 'gm-ok' }, `${t('sessionExecuted')}${sessionPlanState.preset ? `（${t('sessionPlanPreset')} ${sessionPlanState.preset}）` : ''}`)
+            : null,
+          h('div', { className: 'gm-md' },
+            sessionPlanState.markdown
+              ? renderMarkdown(sessionPlanState.markdown)
+              : h('div', { className: 'gm-empty' }, t('sessionPlanEmpty')))
+        ),
+        sessionPlanState.executed ? null : h('div', { className: 'gm-cardfoot' },
+          h('button', { className: 'gm-btn gm-danger', onClick: () => setSessionConfirm(true) }, t('sessionPlanConfirm')))
+      ) : null;
+
       return h('div', { className: 'gm-root' },
         h('style', null, STYLE),
         staleBanner,
         header,
-        h('div', { className: 'gm-main' }, mapCard, h('div', { className: 'gm-col' }, currentCard, rightCard)),
+        h('div', { className: 'gm-main' }, mapCard,
+          h('div', { className: 'gm-col' }, planCard || h('div', { className: 'gm-col-inner' }, currentCard, rightCard))),
         footer,
         specialModal,
         settingsModal,
         planModal,
         finalModal,
         auditModal,
-        sessionPlanModal,
+        sessionConfirmModal,
         toast ? h('div', { className: 'gm-toast' }, toast) : null
       );
     }

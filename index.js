@@ -662,6 +662,14 @@ export async function apply(ctx, rawConfig = {}) {
     } catch { /* 诊断文件写不了不影响主流程 */ }
     // B+C：解释结果写进会话（可见通知）+ 另存完整记录（log-only）
     if (config.planSession && entries.length > 0) {
+      // 失败原因落盘：以前这里是静默的，导致"根本没写进会话"却查不出来
+      const recordSessionOutcome = async (payload) => {
+        try {
+          await fsp.writeFile(path.join(stateDir, 'explain-session-last.json'), JSON.stringify(
+            Object.assign({ at: new Date().toISOString(), paths: entries.map((e) => e.path).slice(0, 10) }, payload), null, 2
+          ), 'utf8');
+        } catch { /* 诊断写不了不影响主流程 */ }
+      };
       try {
         const today = new Date().toISOString().slice(0, 10);
         const resolved = await sessionBridge.resolveWorkspace({ workspaceId: config.workspaceId, workspacePath: config.workspacePath });
@@ -673,15 +681,19 @@ export async function apply(ctx, rawConfig = {}) {
             const notice = buildExplainNotice({ entries: detail, used: result.used, explainPath: record.ok ? record.file : null });
             await sessionBridge.appendNotice(ensured.sessionId, { summary: notice.summary, text: notice.text, raw: detail, recordType: 'plugin:garbage-master/explain' });
             await sessionBridge.noteActivity({ kind: 'explain', sessionId: ensured.sessionId, workspaceId: resolved.workspace.id, today });
-            result.session = { sessionId: ensured.sessionId, notice: notice.summary };
+            result.session = { sessionId: ensured.sessionId, notice: notice.summary, workspace: resolved.workspace.path };
+            await recordSessionOutcome({ ok: true, workspace: resolved.workspace, sessionId: ensured.sessionId, notice: notice.summary });
           } else {
-            result.session = { error: ensured.reason };
+            result.session = { error: `ensure-session: ${ensured.reason}` };
+            await recordSessionOutcome({ ok: false, stage: 'ensure-session', error: ensured.reason });
           }
         } else {
-          result.session = { error: resolved.reason };
+          result.session = { error: `workspace: ${resolved.reason}` };
+          await recordSessionOutcome({ ok: false, stage: 'resolve-workspace', error: resolved.reason });
         }
       } catch (error) {
-        result.session = { error: error && error.message ? error.message : 'session-notice-failed' };
+        result.session = { error: `exception: ${error && error.message ? error.message : 'unknown'}` };
+        await recordSessionOutcome({ ok: false, stage: 'exception', error: error && error.message ? error.message : 'unknown' });
       }
     }
     return result;
@@ -730,7 +742,14 @@ export async function apply(ctx, rawConfig = {}) {
       workspace: resolved.workspace, target, items: plan.items, totals: plan.totals,
       planPath, planId: plan.id, maxItems: 60
     });
+    // 计划阶段只读：优先用 planMode；本 profile 没挂载 plan-mode 插件时降级为
+    // 「read-only 权限预设 + 提示词强约束」，并在返回值里明确标出来（不静默）。
     const planMode = await sessionBridge.setPlanMode(ensured.sessionId, true);
+    let planPermission = null;
+    if (!planMode.ok) {
+      const readOnly = (sessionBridge.listPermissions().options || []).find((o) => /read[-_]?only|只读/i.test(o.value) || /read[-_]?only|只读/i.test(o.name));
+      if (readOnly) planPermission = await sessionBridge.setPermission(ensured.sessionId, readOnly.value);
+    }
     await sessionBridge.prompt(ensured.sessionId, promptText);
     const waited = await sessionBridge.waitForIdle(ensured.sessionId, { timeoutMs });
 
@@ -760,7 +779,8 @@ export async function apply(ctx, rawConfig = {}) {
       markdown,
       planSource: source,
       sessionIdle: waited.ok,
-      planMode,
+      planMode: planMode.ok ? planMode : { ok: false, degraded: true, reason: planMode.reason || 'plan-mode-unavailable' },
+      planPermission,
       totals: plan.totals,
       skipped: plan.skipped,
       workspace: resolved.workspace

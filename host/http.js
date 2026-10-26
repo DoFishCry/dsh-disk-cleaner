@@ -14,7 +14,6 @@ import { promises as fsp } from 'node:fs';
 import { isUnder } from '../core/model.js';
 import { buildPlan, executePlan } from './exec.js';
 import { listDirectory, measureDirectory } from './ls.js';
-import { applyAiPlan, parseAiPlan, requestAiPlan } from './plan-ai.js';
 import { openWithDefault, reveal } from './open.js';
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -162,6 +161,9 @@ export function createApi(deps) {
       return { body: { ok: true, target } };
     },
 
+    // 清单计划：**完全确定性，不调用 LLM**。
+    // LLM 只在"会话生成计划文档"那一步出现（/api/session-plan），这里只做程序能确定的事：
+    // 路径合法性、体积服务端重算、风险档、路径互斥、受保护路径拦截、分组与顺序。
     'POST /api/plan': async ({ body }) => {
       const result = buildPlan(store, {
         targetId: body && body.targetId,
@@ -174,41 +176,7 @@ export function createApi(deps) {
         compiledRules
       });
       if (!result.ok) return { status: 400, body: { error: result.error } };
-
-      // ── AI 计划：只补解释/建议/顺序/告警，**不改变删除范围**（范围永远由服务端决定）
-      let ai = { used: false, reason: 'skipped' };
       const plan = result.plan;
-      if (body && body.useAi !== false && plan.items.length > 0) {
-        const target = store.targets.find((t) => t.id === plan.targetId) || null;
-        const requested = await requestAiPlan({
-          llm: typeof getLlm === 'function' ? getLlm() : null,
-          selection: typeof getModelSelection === 'function' ? getModelSelection() : null,
-          target,
-          items: plan.items,
-          totals: plan.totals,
-          timeoutMs: Number(config.aiTimeoutMs) || 30000
-        });
-        if (!requested.ok) {
-          ai = { used: false, reason: requested.reason || 'llm-failed' };
-        } else {
-          const parsed = parseAiPlan(requested.text, new Set(plan.items.map((i) => i.path)));
-          if (!parsed.ok) {
-            ai = { used: false, reason: parsed.reason || 'bad-json' };
-          } else {
-            applyAiPlan(plan, Object.assign({}, parsed, { provider: requested.provider, model: requested.model }));
-            ai = {
-              used: true,
-              summary: parsed.summary,
-              warnings: parsed.warnings,
-              dropped: parsed.dropped,
-              provider: requested.provider,
-              model: requested.model
-            };
-          }
-        }
-        store.emit('plan-ai', { planId: plan.id, used: ai.used, reason: ai.reason || null });
-      }
-
       return {
         body: {
           ok: true,
@@ -222,11 +190,10 @@ export function createApi(deps) {
           pending: plan.pending,
           uninstall: plan.uninstall || [],
           restartCount: plan.restartCount,
-          ai,
+          ai: { used: false, reason: 'disabled:deterministic-only' },
           items: plan.items.map((i) => ({
             path: i.path, size: i.size, risk: i.risk, mode: i.mode, recursive: i.recursive,
-            source: i.source, note: i.note, special: i.special, remedy: i.remedy,
-            aiReason: i.aiReason || null, aiSuggestion: i.aiSuggestion || null
+            source: i.source, note: i.note, special: i.special, remedy: i.remedy
           }))
         }
       };
@@ -381,7 +348,8 @@ export function createApi(deps) {
       if (entries.length === 0) return { status: 400, body: { error: 'no-valid-paths' } };
       // 注意：不要传 null——宿主 seam 只接受真正的 AbortSignal 或省略
       const result = await explainPaths(entries, undefined, Boolean(body && body.force));
-      return { body: { ok: true, results: result.results || {}, error: result.error || null, used: result.used || null } };
+      // session 字段必须带回去：会话写入失败时前端/排障才能知道原因（以前被丢掉）
+      return { body: { ok: true, results: result.results || {}, error: result.error || null, used: result.used || null, session: result.session || null } };
     },
 
     'POST /api/config': async ({ body }) => {
