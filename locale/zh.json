@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "title": "垃圾清理台",
+    "description": "扫描 Linux 磁盘占用，按规则标注风险与处置方式，在独立面板里勾选、永久删除并实时查看回收进度。"
+  },
+  "panel": "垃圾清理台",
+  "scan": "扫描",
+  "rescan": "重新扫描",
+  "scanning": "扫描中",
+  "targets": "目标",
+  "candidates": "候选清理项",
+  "size": "体积",
+  "risk": "风险",
+  "action": "处置",
+  "note": "说明",
+  "selectAll": "全选可选",
+  "clear": "清空勾选",
+  "includeRecursive": "目录候选包含子项（递归删除）",
+  "submit": "提交清理",
+  "confirmTitle": "确认永久删除",
+  "dryRunOn": "演练模式（不会真删）",
+  "dryRunOff": "已关闭演练模式",
+  "progress": "进度",
+  "report": "报告",
+  "reveal": "在文件管理器中显示",
+  "open": "用默认程序打开",
+  "showHidden": "显示隐藏文件",
+  "riskSafe": "可安全删除",
+  "riskCaution": "需你确认",
+  "riskKeep": "建议保留",
+  "riskBlocked": "不可删除"
+}

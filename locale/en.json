@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "title": "Cleanup Console",
+    "description": "Scans Linux disk usage, labels risk and remedy per rule, and lets you select, permanently delete, and watch reclaimed space in a dedicated panel."
+  },
+  "panel": "Cleanup Console",
+  "scan": "Scan",
+  "rescan": "Rescan",
+  "scanning": "Scanning",
+  "targets": "Target",
+  "candidates": "Cleanup candidates",
+  "size": "Size",
+  "risk": "Risk",
+  "action": "Action",
+  "note": "Note",
+  "selectAll": "Select all selectable",
+  "clear": "Clear selection",
+  "includeRecursive": "Include directory contents (recursive delete)",
+  "submit": "Submit cleanup",
+  "confirmTitle": "Confirm permanent deletion",
+  "dryRunOn": "Dry run (nothing is deleted)",
+  "dryRunOff": "Dry run is OFF",
+  "progress": "Progress",
+  "report": "Report",
+  "reveal": "Show in file manager",
+  "open": "Open with default app",
+  "showHidden": "Show hidden files",
+  "riskSafe": "Safe to delete",
+  "riskCaution": "Needs your review",
+  "riskKeep": "Better kept",
+  "riskBlocked": "Never delete"
+}

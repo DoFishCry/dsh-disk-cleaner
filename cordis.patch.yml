@@ -1,0 +1,9 @@
+- insert:
+    - id: garbage-master
+      name: '@local/dsh-garbage-master'
+      config:
+        # 演练模式已移除：默认走「提交 → 计划 → 确认 → 二次确认 → 执行」的真实流程。
+        # 执行器内部仍保留 dryRun 能力（供测试与排障），但绝不在这里默认开启 ——
+        # 否则界面上点了「确认执行」会静默地什么都不做。
+        dryRun: false
+        workers: 3

@@ -1,0 +1,7 @@
+node_modules/
+*.log
+tests/.fixture-*
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
