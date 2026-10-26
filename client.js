@@ -20,6 +20,13 @@ window.__ModuleLoader__.load({
   id: '@local/dsh-garbage-master',
   factory(require) {
     const React = require('react');
+    // 复用 DSH 自己的 Markdown 渲染器（侧栏计划预览/文档预览用的就是它）：primitives.MarkdownText。
+    // 取不到时回退到下面的 renderMarkdown（自绘，样式对齐主题）。
+    let MarkdownText = null;
+    try {
+      const primitives = require('@deepseek-ai/dsh-client-ui-primitives');
+      if (primitives && primitives.MarkdownText) MarkdownText = primitives.MarkdownText;
+    } catch { MarkdownText = null; }
     const h = React.createElement;
     const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
@@ -573,6 +580,9 @@ table.gm-table td.num{text-align:right;font-variant-numeric:tabular-nums;white-s
 .gm-modal-wide{width:920px;max-width:94vw}
 .gm-ok{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--gm-safe);border-left:4px solid var(--gm-safe);border-radius:8px;padding:8px 10px;font-size:12.5px}
 .gm-md{font-size:13px;line-height:1.55;color:var(--dsw-alias-label-primary)}
+.gm-md-native{font-size:13px}
+.gm-md-native>:first-child{margin-top:0}
+.gm-md-native>:last-child{margin-bottom:0}
 .gm-md-h{margin:10px 0 6px;font-weight:600}
 .gm-md-p{margin:6px 0}
 .gm-md-list{margin:6px 0 6px 20px;padding:0}
@@ -1293,12 +1303,18 @@ input[type=checkbox]{accent-color:var(--gm-accent);width:14px;height:14px;margin
         try {
           const items = cartItems.map((i) => ({ path: i.path, mode: i.mode, special: i.special || '' }));
           const out = await api('/api/session-plan', { method: 'POST', body: { targetId, items, includeRecursive: true } });
-          if (!out.ok) { setSessionNotice(out.error || t('sessionPlanFailed')); return; }
+          if (!out.ok) {
+            const message = out.error || t('sessionPlanFailed');
+            setSessionNotice(message);
+            showToast(message); // 错误必须可见：以前只写进一个没渲染的状态里，用户什么都看不到
+            return;
+          }
           setSessionPlanState(out);
           setSessionConfirm(false);
           setFootOpen(false);
         } catch (error) {
           setSessionNotice(error.message);
+          showToast(error.message);
         } finally {
           setSessionPlanning(false);
         }
@@ -1450,6 +1466,9 @@ input[type=checkbox]{accent-color:var(--gm-accent);width:14px;height:14px;margin
         } catch (e) { showToast(e.message); }
       };
       const cancelRun = async () => { try { await api('/api/cancel', { method: 'POST', body: {} }); } catch (e) { showToast(e.message); } };
+
+      // 面板一挂载就拉一次会话信息：顶部要显示"已绑定工作区"，不必等用户打开设置
+      useEffect(() => { loadSessionInfo(); }, []);
 
       // ── 渲染
       const staleBanner = staleToken ? h('div', { className: 'gm-stale' },
@@ -2056,9 +2075,11 @@ input[type=checkbox]{accent-color:var(--gm-accent);width:14px;height:14px;margin
           sessionPlanState.executed
             ? h('div', { className: 'gm-ok' }, `${t('sessionExecuted')}${sessionPlanState.preset ? `（${t('sessionPlanPreset')} ${sessionPlanState.preset}）` : ''}`)
             : null,
-          h('div', { className: 'gm-md' },
+          h('div', { className: MarkdownText ? 'gm-md gm-md-native' : 'gm-md' },
             sessionPlanState.markdown
-              ? renderMarkdown(sessionPlanState.markdown)
+              ? (MarkdownText
+                ? h(MarkdownText, { text: sessionPlanState.markdown })
+                : renderMarkdown(sessionPlanState.markdown))
               : h('div', { className: 'gm-empty' }, t('sessionPlanEmpty')))
         ),
         sessionPlanState.executed ? null : h('div', { className: 'gm-cardfoot' },

@@ -489,6 +489,29 @@ if (/sessionInfoState\.bound/.test(clientSource) && /workspaceUnbound/.test(clie
 else { failures += 1; console.log('  ✗ 面板没显示绑定工作区'); }
 
 /* DOC-SPLIT */
+console.log('\n会话计划集成（r22）');
+checks += 1;
+{
+  const idx = await fsp.readFile(path.join(repo, 'index.js'), 'utf8');
+  const imports = /import \{([^}]*)\} from '\.\/host\/exec\.js'/.exec(idx);
+  const imported = imports ? imports[1].split(',').map((x) => x.trim()) : [];
+  const usesBuildPlan = /buildPlan\(store/.test(idx);
+  if (!usesBuildPlan || imported.includes('buildPlan')) console.log('  ✓ sessionPlan 用到的 buildPlan 已导入（真机曾因漏导入直接报 buildPlan is not defined）');
+  else { failures += 1; console.log('  ✗ index.js 用了 buildPlan 却没导入'); }
+}
+checks += 1;
+if (/showToast\(message\)/.test(clientSource) && /showToast\(error\.message\)/.test(clientSource)) console.log('  ✓ 生成计划失败会弹 toast（不再只写进不可见状态）');
+else { failures += 1; console.log('  ✗ 生成计划失败仍是静默'); }
+
+/* DOC-SPLIT */
+checks += 1;
+{
+  const bridge = await fsp.readFile(path.join(repo, 'host', 'session-bridge.js'), 'utf8');
+  if (/else if \(workspace && workspace\.path\) request\.cwd/.test(bridge)) console.log('  ✓ session.create 的 workspaceId/cwd 二选一（宿主会拒绝同时传）');
+  else { failures += 1; console.log('  ✗ create 同时传了 workspaceId 与 cwd'); }
+}
+
+/* DOC-SPLIT */
 console.log('\n元素与样式一致性');
 const defined = new Set();
 for (const m of css.matchAll(/\.(gm-[a-z0-9-]+)/g)) defined.add(m[1]);

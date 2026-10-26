@@ -21,7 +21,7 @@ import { createStore } from './host/state.js';
 import {
   EXECUTOR_TOOL, authorizeCaller, buildDispatchPlan, createGroupWaiters, dispatchSequentially
 } from './host/dispatch.js';
-import { executePlan } from './host/exec.js';
+import { buildPlan, executePlan } from './host/exec.js';
 import { cacheKey, explainEntries } from './host/explain.js';
 import { listAuditRuns, pruneAudit } from './host/audit.js';
 import { optSignal } from './host/signal.js';
@@ -793,19 +793,31 @@ export async function apply(ctx, rawConfig = {}) {
     const planMode = await sessionBridge.setPlanMode(ensured.sessionId, true);
     let planPermission = null;
     if (!planMode.ok) {
-      const readOnly = (sessionBridge.listPermissions().options || []).find((o) => /read[-_]?only|只读/i.test(o.value) || /read[-_]?only|只读/i.test(o.name));
-      if (readOnly) planPermission = await sessionBridge.setPermission(ensured.sessionId, readOnly.value);
+      // 计划阶段要"只规划不执行"，但**必须能写计划文件**：
+      // 用 read-only 会让写文件触发审批（headless 无人应答 → 会话卡死，真机踩过）。
+      // workspace-write = 只能在绑定工作区内写（计划文件就在这里），范围外仍被沙箱拦住。
+      const options = sessionBridge.listPermissions().options || [];
+      const planPreset = options.find((o) => /^workspace-write$/i.test(o.value))
+        || options.find((o) => /workspace[-_]?write/i.test(o.value) || /工作区内/i.test(o.name));
+      if (planPreset) planPermission = await sessionBridge.setPermission(ensured.sessionId, planPreset.value);
     }
-    await sessionBridge.prompt(ensured.sessionId, promptText);
-    const waited = await sessionBridge.waitForIdle(ensured.sessionId, { timeoutMs });
+    const prompted = await sessionBridge.prompt(ensured.sessionId, promptText);
+    if (!prompted.ok) {
+      return { ok: false, error: `把清单送进会话失败：${prompted.reason}` };
+    }
+    const promptVia = prompted.via || null;
+    // 等"计划真的产出"：文件优先，其次等 running→idle 后读助手回复
+    const waited = await sessionBridge.waitForPlan({ sessionId: ensured.sessionId, planPath, timeoutMs });
 
     let markdown = '';
     let source = null;
     try { markdown = await fsp.readFile(planPath, 'utf8'); source = 'file'; } catch { markdown = ''; }
+    if (!markdown && waited && waited.text) { markdown = waited.text; source = 'session'; }
     if (!markdown) {
       const read = await sessionBridge.readLastAssistantText(ensured.sessionId, { limit: 60 });
       if (read.ok) { markdown = read.text; source = 'session'; }
     }
+    const waitNote = (waited && waited.reason) ? `（${waited.reason}）` : '';
     // 计划落一份到审计目录，便于事后核对"计划了什么"
     try {
       await fsp.mkdir(auditDir, { recursive: true });
@@ -819,12 +831,15 @@ export async function apply(ctx, rawConfig = {}) {
     return {
       ok: true,
       planId: plan.id,
+      warning: markdown ? null : `会话没有产出计划内容${waitNote}`,
       sessionId: ensured.sessionId,
       sessionAction: ensured.action,
       planPath,
       markdown,
       planSource: source,
-      sessionIdle: waited.ok,
+      sessionIdle: Boolean(waited && waited.ok),
+      promptVia,
+      waitInfo: waited ? { via: waited.via || null, reason: waited.reason || null, sawRunning: Boolean(waited.sawRunning), waitedMs: waited.waitedMs || null } : null,
       planMode: planMode.ok ? planMode : { ok: false, degraded: true, reason: planMode.reason || 'plan-mode-unavailable' },
       planPermission,
       totals: plan.totals,

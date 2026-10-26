@@ -112,9 +112,10 @@ export function createSessionBridge({ ctx, stateDir, logger = null }) {
     const s = services();
     if (!s.sessionController || typeof s.sessionController.create !== 'function') return { ok: false, reason: 'no-session-controller' };
     try {
+      // 宿主明确要求：workspaceId 与 cwd 二选一（都传会直接报错）
       const request = {};
       if (workspace && workspace.id) request.workspaceId = workspace.id;
-      if (workspace && workspace.path) request.cwd = workspace.path;
+      else if (workspace && workspace.path) request.cwd = workspace.path;
       const created = await s.sessionController.create(request);
       const sessionId = created && created.sessionId ? String(created.sessionId) : null;
       if (!sessionId) return { ok: false, reason: 'no-session-id-returned' };
@@ -127,16 +128,14 @@ export function createSessionBridge({ ctx, stateDir, logger = null }) {
     }
   }
 
+  /**
+   * 会话是否"可继续"：必须是**本进程内有 agent** 的会话。
+   * 只查 sessions.get / inspect 会把上一个进程遗留的持久化会话误判为可用 ——
+   * 结果就是 prompt 发进一个没人驱动的会话：不报错、也不产出（真机踩过，等了 4 分钟）。
+   */
   async function sessionAlive(sessionId) {
-    const s = services();
     if (!sessionId) return false;
-    if (s.sessions && typeof s.sessions.get === 'function') {
-      try { if (s.sessions.get(sessionId)) return true; } catch { /* 继续探测 */ }
-    }
-    if (s.sessionController && typeof s.sessionController.inspect === 'function') {
-      try { await s.sessionController.inspect(sessionId); return true; } catch { return false; }
-    }
-    return false;
+    return Boolean(await resolveAgent(sessionId));
   }
 
   /**
@@ -167,21 +166,46 @@ export function createSessionBridge({ ctx, stateDir, logger = null }) {
   }
 
   // ── 会话读写 ────────────────────────────────────────────
+  /**
+   * 把一段文本送进会话。
+   * 1) 先走官方 RPC `sessionController.prompt`；
+   * 2) 失败（跨进程/信任门禁等原因）时，直接驱动**本进程内的 agent**：`agent.followup(...)`。
+   *   真机踩过：RPC 静默失败，会话里既没有 user message 也没有报错。
+   */
   async function prompt(sessionId, text) {
     const s = services();
-    if (!s.sessionController || typeof s.sessionController.prompt !== 'function') return { ok: false, reason: 'no-prompt-api' };
     if (typeof text !== 'string' || text.trim() === '') return { ok: false, reason: 'empty-prompt' };
+    let rpcError = null;
+    if (s.sessionController && typeof s.sessionController.prompt === 'function') {
+      try {
+        // prompt(request, signal)：宿主内部第一行就 signal.throwIfAborted()，不传会直接抛
+        const out = await s.sessionController.prompt({
+          requestId: `gm-${randomUUID()}`,
+          sessionId,
+          mode: 'queue',
+          content: [{ type: 'text', text }]
+        }, new AbortController().signal);
+        if (out && out.accepted) return { ok: true, via: 'rpc' };
+        rpcError = 'not-accepted';
+      } catch (error) {
+        rpcError = error && error.message ? error.message : 'rpc-failed';
+      }
+    }
+    const agent = await resolveAgent(sessionId);
+    if (!agent) return { ok: false, reason: `no-agent:${rpcError || 'unknown'}` };
+    if (typeof agent.followup !== 'function') return { ok: false, reason: `no-followup:${rpcError || 'unknown'}` };
     try {
-      // 注意：宿主 seam 的 signal 只接受真正的 AbortSignal 或省略
-      await s.sessionController.prompt({
-        requestId: `gm-${randomUUID()}`,
-        sessionId,
-        mode: 'queue',
-        content: [{ type: 'text', text }]
-      });
-      return { ok: true };
+      // 插件包内无法 import '@deepseek-ai/dsh-llm'（裸标识符解析不到），直接按消息形状构造
+      const message = {
+        id: `msg-${randomUUID()}`,
+        role: 'user',
+        content: [{ type: 'text', text }],
+        source: { kind: 'user' }
+      };
+      agent.followup(message);
+      return { ok: true, via: 'agent-followup', rpcError };
     } catch (error) {
-      return { ok: false, reason: error && error.message ? error.message : 'prompt-failed' };
+      return { ok: false, reason: `followup-failed:${error && error.message ? error.message : 'unknown'}; rpc=${rpcError || 'unknown'}` };
     }
   }
 
@@ -195,17 +219,13 @@ export function createSessionBridge({ ctx, stateDir, logger = null }) {
     const body = String(text || summary || '').slice(0, 8000);
     let noticeError = null;
     try {
-      const mod = await import('@deepseek-ai/dsh-llm');
-      const createUserMessage = mod && mod.createUserMessage;
-      if (typeof createUserMessage === 'function') {
-        const message = createUserMessage({
-          content: [{ type: 'text', text: body }],
-          source: { kind: NOTICE_KIND, form: 'notice', summary: String(summary || '').slice(0, 200) }
-        });
-        session.append('user/message', message, { surfaceOp: 'append' });
-      } else {
-        noticeError = 'createUserMessage-not-exported';
-      }
+      const message = {
+        id: `msg-${randomUUID()}`,
+        role: 'user',
+        content: [{ type: 'text', text: body }],
+        source: { kind: NOTICE_KIND, form: 'notice', summary: String(summary || '').slice(0, 200) }
+      };
+      session.append('user/message', message, { surfaceOp: 'append' });
     } catch (error) {
       noticeError = error && error.message ? error.message : 'notice-failed';
     }
@@ -347,6 +367,60 @@ export function createSessionBridge({ ctx, stateDir, logger = null }) {
     return { ok: false, reason: 'timeout', waitedMs: Date.now() - started };
   }
 
+  /**
+   * 等"计划真的产出"：文件出现 → 直接成功；否则轮询会话状态，
+   * 看到过 running 之后转 idle 再去读最后一条 assistant 文本。
+   * （早先只等 idle：prompt 刚入队时 agent 还没启动，会被误判成"已空闲"。）
+   */
+  async function waitForPlan({ sessionId, planPath, timeoutMs = 240000, pollMs = 800, minChars = 40 } = {}) {
+    const started = Date.now();
+    let sawRunning = false;
+    let lastLen = -1;
+    let stableIdle = 0;
+    const inspect = (() => {
+      const s = services();
+      return s.sessionController && typeof s.sessionController.inspect === 'function'
+        ? s.sessionController.inspect.bind(s.sessionController) : null;
+    })();
+
+    while (Date.now() - started < timeoutMs) {
+      if (planPath) {
+        try {
+          const text = await fsp.readFile(planPath, 'utf8');
+          if (text.trim().length >= minChars) return { ok: true, via: 'file', waitedMs: Date.now() - started };
+        } catch { /* 还没写 */ }
+      }
+      let busy = false;
+      if (inspect) {
+        try {
+          const info = await inspect(sessionId);
+          busy = Boolean(info && (info.running || info.busy || info.status === 'running'));
+        } catch { busy = false; }
+      }
+      if (busy) { sawRunning = true; stableIdle = 0; }
+      if (sawRunning && !busy) {
+        const read = await readLastAssistantText(sessionId, { limit: 60 });
+        if (read.ok && read.text.length >= minChars) {
+          if (read.text.length === lastLen) stableIdle += 1;
+          else { stableIdle = 0; lastLen = read.text.length; }
+          if (stableIdle >= 1) return { ok: true, via: 'session', text: read.text, waitedMs: Date.now() - started };
+        }
+      }
+      // 活跃度判定：能读到任何 assistant 文本/计划文件就算在干活（inspect 的 running 字段并不总是给）
+      if (!sawRunning && Date.now() - started > 20000) {
+        const probe = await readLastAssistantText(sessionId, { limit: 20 });
+        if (probe.ok && probe.text.length > 0) sawRunning = true;
+      }
+      if (!sawRunning && Date.now() - started > 90000) {
+        return { ok: false, reason: 'session-not-started', sawRunning: false, waitedMs: Date.now() - started };
+      }
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+    // 超时也把能拿到的文本带回去，便于排障
+    const last = await readLastAssistantText(sessionId, { limit: 60 });
+    return { ok: false, reason: 'timeout', sawRunning, waitedMs: Date.now() - started, text: last.ok ? last.text : '' };
+  }
+
   /** 读会话最近一条 assistant 文本（计划正文）。 */
   async function readLastAssistantText(sessionId, { limit = 40 } = {}) {
     const s = services();
@@ -386,6 +460,7 @@ export function createSessionBridge({ ctx, stateDir, logger = null }) {
     resolvePreset,
     listModels,
     waitForIdle,
+    waitForPlan,
     readLastAssistantText,
     resolveAgent
   };
