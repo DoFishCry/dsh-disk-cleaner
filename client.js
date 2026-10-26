@@ -104,7 +104,7 @@ window.__ModuleLoader__.load({
         staleTokenAuto: '（已自动刷新…若没反应请点右侧按钮）', auditMovedHint: '运行报告与日志已移到右上角「审计」里，不再挤占界面。',
         reexplain: '重新解释当前这一层', reexplainStarted: '正在重新生成解释…', reexplainHint: '忽略缓存重新生成', explainUnavailable: '解释服务未就绪（重启 dsh 后可用）',
         explainCacheHint: '解释会按路径缓存，内容变化不会自动重新生成；需要时点下面的按钮强制刷新当前层。',
-        setExplainDepth: '自动解释本层子项（0=关闭）', workspaceAuto: '自动（第一个工作区）', setExplainItems: '每层最多解释几条',
+        setExplainDepth: '自动解释本层子项（0=关闭）', workspaceAuto: '自动（第一个工作区）', workspaceUnbound: '未绑定', setExplainItems: '每层最多解释几条',
         setExplainSearches: '每层联网搜索次数', setExplainWeb: '把握不足时联网搜索',
         setExplainConcurrency: '解释并发批次数（越大越快）', setExplainEffort: '解释的思考强度',
         effortInherit: '继承当前模型选择', effortDefaultTag: '（默认）',
@@ -198,7 +198,7 @@ window.__ModuleLoader__.load({
         staleTokenAuto: '(auto-reloading… click the button if nothing happens)', auditMovedHint: 'Reports and logs moved into Audit (top right).',
         reexplain: 'Re-explain this level', reexplainStarted: 'Regenerating explanations…', reexplainHint: 'Ignore cache and regenerate', explainUnavailable: 'Explanation service not live (restart dsh)',
         explainCacheHint: 'Explanations are cached per path and are not regenerated when contents change; use the button below to force this level.',
-        setExplainDepth: 'Auto-explain this level\'s children (0=off)', workspaceAuto: 'Auto (first workspace)', setExplainItems: 'Max items explained per level',
+        setExplainDepth: 'Auto-explain this level\'s children (0=off)', workspaceAuto: 'Auto (first workspace)', workspaceUnbound: 'unbound', setExplainItems: 'Max items explained per level',
         setExplainSearches: 'Web searches per level', setExplainWeb: 'Search the web when unsure',
         setExplainConcurrency: 'Concurrent explain batches', setExplainEffort: 'Reasoning effort for explanations',
         effortInherit: 'Inherit from model selection', effortDefaultTag: ' (default)',
@@ -1314,7 +1314,12 @@ input[type=checkbox]{accent-color:var(--gm-accent);width:14px;height:14px;margin
           });
           if (!out.ok) { setSessionNotice(out.error || t('sessionExecuteFailed')); return; }
           setSessionConfirm(false);
-          setSessionPlanState(Object.assign({}, sessionPlanState, { executed: true, permission: out.permission || null, preset: out.preset || null }));
+          setSessionPlanState(Object.assign({}, sessionPlanState, {
+            executed: true,
+            permission: out.permission || null,
+            preset: out.preset || null,
+            permissionSpec: out.permissionSpec || null
+          }));
           setCart(new Map());
         } catch (error) {
           setSessionNotice(error.message);
@@ -1378,6 +1383,7 @@ input[type=checkbox]{accent-color:var(--gm-accent);width:14px;height:14px;margin
             }
           });
           setSettingsOpen(false);
+          loadSessionInfo(); // 工作区绑定可能刚被改过，立刻刷新面板显示
           showToast(`${t('saved')}（${t('settingsHint')}）`);
           if (out && out.settings) setSnapshot((cur) => (cur ? Object.assign({}, cur, { config: Object.assign({}, cur.config, { workers: out.settings.workers }) }) : cur));
         } catch (e) { showToast(e.message); }
@@ -1502,6 +1508,16 @@ input[type=checkbox]{accent-color:var(--gm-accent);width:14px;height:14px;margin
               setSettingsOpen(true);
             } catch (e) { showToast(e.message); }
           } }, `⚙ ${t('settings')}`),
+          h('button', { className: 'gm-btn', title: t('auditTitle'), onClick: openAudit }, `🗂 ${t('auditOpen')}`),
+          sessionPlanning
+            ? h('span', { className: 'gm-t3', title: t('sessionPlanning') }, h('span', { className: 'gm-spin gm-spin-sm' }), ` ${t('sessionPlanning')}`)
+            : null,
+          sessionInfoState && sessionInfoState.workspace
+            ? h('span', {
+              className: 'gm-t3',
+              title: `${sessionInfoState.workspace.path}${sessionInfoState.bound ? ` · ${sessionInfoState.bound.id}` : ''}`
+            }, `${t('sessionPlanWorkspace')} ${sessionInfoState.workspace.title || sessionInfoState.workspace.path}`)
+            : null,
           h('button', { className: 'gm-btn', onClick: scanning ? cancelScan : startScan, disabled: !targetId },
             scanning ? `⟳ ${t('cancelScan')}` : (scanSummary && scanSummary.status === 'complete' ? t('rescan') : t('scan')))
         ),

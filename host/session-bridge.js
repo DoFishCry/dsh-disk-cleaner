@@ -277,6 +277,16 @@ export function createSessionBridge({ ctx, stateDir, logger = null }) {
     }
   }
 
+  /** 查某档权限预设实际会写入的 sandbox/approval（用于展示与核对）。 */
+  function resolvePreset(presetName) {
+    const s = services();
+    if (!presetName || !s.permissions || typeof s.permissions.resolve !== 'function') return null;
+    try {
+      const spec = s.permissions.resolve(presetName);
+      return spec ? { sandbox: spec.sandbox, approval: spec.approval, name: spec.name || presetName } : null;
+    } catch { return null; }
+  }
+
   async function setPermission(sessionId, presetName) {
     const s = services();
     if (!presetName) return { ok: false, reason: 'no-preset' };
@@ -373,6 +383,7 @@ export function createSessionBridge({ ctx, stateDir, logger = null }) {
     setPlanMode,
     listPermissions,
     setPermission,
+    resolvePreset,
     listModels,
     waitForIdle,
     readLastAssistantText,

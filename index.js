@@ -521,6 +521,44 @@ export async function apply(ctx, rawConfig = {}) {
   // ── 会话桥：工作区绑定、会话复用策略、计划模式、权限、可见通知 ─────────
   const sessionBridge = createSessionBridge({ ctx, stateDir, logger: ctx.logger || null });
 
+  /**
+   * 固定工作区：**确定一次就持久化**，之后所有会话都归属它。
+   * 未绑定（或绑定失效，例如工作区被删）时：回退到列表第一个并写回设置。
+   */
+  let boundWorkspaceCache = null;
+  async function ensureBoundWorkspace() {
+    const resolved = await sessionBridge.resolveWorkspace({ workspaceId: config.workspaceId, workspacePath: config.workspacePath });
+    if (!resolved.ok) {
+      boundWorkspaceCache = null;
+      return { ok: false, reason: resolved.reason };
+    }
+    const ws = resolved.workspace;
+    const needsPersist = config.workspaceId !== ws.id || config.workspacePath !== ws.path;
+    if (needsPersist) {
+      config.workspaceId = ws.id;
+      config.workspacePath = ws.path;
+      try { await fsp.writeFile(SETTINGS_FILE, JSON.stringify(currentSettings(), null, 2), 'utf8'); } catch { /* 写不了下次再试 */ }
+      store.emit('config-changed', { settings: currentSettings() });
+    }
+    boundWorkspaceCache = ws;
+    return { ok: true, workspace: ws, boundNow: needsPersist };
+  }
+
+  /** 插件启动时就尝试绑定一次（工作区服务可能稍后才就绪，失败会在首次使用时重试）。 */
+  async function bindWorkspaceAtStartup() {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        const out = await ensureBoundWorkspace();
+        if (out.ok) {
+          store.emit('workspace-bound', { workspace: out.workspace, boundNow: Boolean(out.boundNow) });
+          return out;
+        }
+      } catch { /* 服务未就绪，等下一轮 */ }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    return { ok: false, reason: 'workspace-unavailable' };
+  }
+
   /** 解释用模型：设置覆盖 → 计划会话的模型 → 默认选择。 */
   async function explainSelection() {
     try {
@@ -544,6 +582,9 @@ export async function apply(ctx, rawConfig = {}) {
   function pickWidestPreset() {
     const listed = sessionBridge.listPermissions();
     if (!listed.ok || listed.options.length === 0) return null;
+    // 清理目标必然超出工作区范围 → 优先「完全权限」这一档
+    const exact = listed.options.find((o) => /^danger-full-access$/i.test(o.value));
+    if (exact) return exact.value;
     const loose = /(full|all|bypass|unrestricted|yolo|完全|不受限|最大)/i;
     const hit = listed.options.find((o) => loose.test(o.value) || loose.test(o.name) || loose.description && loose.test(o.description));
     return (hit || listed.options[listed.options.length - 1]).value;
@@ -672,7 +713,7 @@ export async function apply(ctx, rawConfig = {}) {
       };
       try {
         const today = new Date().toISOString().slice(0, 10);
-        const resolved = await sessionBridge.resolveWorkspace({ workspaceId: config.workspaceId, workspacePath: config.workspacePath });
+        const resolved = await ensureBoundWorkspace();
         if (resolved.ok) {
           const ensured = await sessionBridge.ensureSession({ kind: 'explain', workspace: resolved.workspace, today });
           if (ensured.ok) {
@@ -701,7 +742,7 @@ export async function apply(ctx, rawConfig = {}) {
 
   // ── 会话计划：程序拼提示词 → 计划模式会话 → Markdown 计划 ──────────────
   async function sessionInfo() {
-    const resolved = await sessionBridge.resolveWorkspace({ workspaceId: config.workspaceId, workspacePath: config.workspacePath });
+    const resolved = await ensureBoundWorkspace();
     const listed = await sessionBridge.listWorkspaces();
     const permissions = sessionBridge.listPermissions();
     const models = await sessionBridge.listModels();
@@ -710,12 +751,17 @@ export async function apply(ctx, rawConfig = {}) {
       capabilities: sessionBridge.capabilities(),
       workspaces: listed.ok ? listed.workspaces : [],
       workspace: resolved.ok ? resolved.workspace : null,
+      bound: resolved.ok ? { id: config.workspaceId, path: config.workspacePath } : null,
+      boundNow: resolved.ok ? Boolean(resolved.boundNow) : false,
       workspaceError: resolved.ok ? null : resolved.reason,
       permissions,
       models: models.ok ? models.providers : [],
       modelsError: models.ok ? null : models.reason,
       policy,
-      planSession: config.planSession
+      planSession: config.planSession,
+      // 执行阶段将使用哪档权限（不用真跑一次也能核对）
+      executionPreset: pickWidestPreset(),
+      executionSpec: sessionBridge.resolvePreset(pickWidestPreset())
     };
   }
 
@@ -724,7 +770,7 @@ export async function apply(ctx, rawConfig = {}) {
    * 绑定工作区的会话（plan 模式）→ 等它产出 → 读回 Markdown。
    */
   async function sessionPlan({ targetId, selection = [], items = null, extraPaths = [], includeRecursive = false, timeoutMs = 240000 } = {}) {
-    const resolved = await sessionBridge.resolveWorkspace({ workspaceId: config.workspaceId, workspacePath: config.workspacePath });
+    const resolved = await ensureBoundWorkspace();
     if (!resolved.ok) return { ok: false, error: `工作区不可用：${resolved.reason}` };
     const caps = sessionBridge.capabilities();
     if (!caps.sessionController || !caps.prompt) return { ok: false, error: '宿主没有提供会话接口（sessionController）' };
@@ -798,7 +844,10 @@ export async function apply(ctx, rawConfig = {}) {
     if (!prompted.ok) return { ok: false, error: `发送执行指令失败：${prompted.reason}` };
     const today = new Date().toISOString().slice(0, 10);
     await sessionBridge.noteActivity({ kind: 'write', sessionId, today });
-    return { ok: true, sessionId, permission, planMode, preset };
+    return {
+      ok: true, sessionId, permission, planMode, preset,
+      permissionSpec: (permission && permission.spec) ? permission.spec : null
+    };
   }
 
   /** 派发：优先团队，逐类下发；团队不可用则降级为进程内执行（同一套租约与审计）。 */
@@ -935,6 +984,15 @@ export async function apply(ctx, rawConfig = {}) {
       cancelScan();
     };
   });
+
+  // 启动即绑定工作区（插件级的固定归属，之后所有会话都在它下面），失败会在首次使用时重试
+  bindWorkspaceAtStartup().then((out) => {
+    if (out.ok) {
+      ctx.logger?.info?.(`[garbage-master] 工作区绑定：${out.workspace.title || out.workspace.path}（${out.workspace.id}）${out.boundNow ? '（本次确定）' : ''}`);
+    } else {
+      ctx.logger?.warn?.(`[garbage-master] 工作区绑定失败：${out.reason}；将在首次使用时重试`);
+    }
+  }).catch(() => { /* 绑定失败不影响其他功能 */ });
 
   ctx.logger?.info?.(
     `[garbage-master] 就绪：目标 ${targets.map((t) => t.path).join(', ')}；规则 ${compiledRules.length} 条；状态目录 ${stateDir}；dryRun=${config.dryRun}`

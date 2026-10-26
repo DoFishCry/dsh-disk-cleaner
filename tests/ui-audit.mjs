@@ -471,6 +471,24 @@ checks += 1;
 }
 
 /* DOC-SPLIT */
+console.log('\n固定工作区 + 完全权限（r21）');
+checks += 1;
+{
+  const idx = await fsp.readFile(path.join(repo, 'index.js'), 'utf8');
+  if (/async function ensureBoundWorkspace/.test(idx) && /bindWorkspaceAtStartup\(\)/.test(idx) && /config\.workspaceId = ws\.id/.test(idx)) console.log('  ✓ 工作区启动即绑定并持久化（未绑定/失效时回退第一个并写回设置）');
+  else { failures += 1; console.log('  ✗ 工作区绑定未持久化'); }
+  checks += 1;
+  if (/\^danger-full-access\$/i.test(idx) || /\^danger-full-access\$/.test(idx)) console.log('  ✓ 执行阶段优先选 danger-full-access');
+  else { failures += 1; console.log('  ✗ 执行权限没有优先完全权限'); }
+  checks += 1;
+  if (/permissionSpec/.test(idx) && /executionPreset/.test(idx) && /resolvePreset/.test(idx)) console.log('  ✓ 返回执行档位与实际 spec（sandbox/approval），不真跑也能核对');
+  else { failures += 1; console.log('  ✗ 未暴露执行档位/spec'); }
+}
+checks += 1;
+if (/sessionInfoState\.bound/.test(clientSource) && /workspaceUnbound/.test(clientSource)) console.log('  ✓ 面板显示绑定的工作区（含未绑定提示）');
+else { failures += 1; console.log('  ✗ 面板没显示绑定工作区'); }
+
+/* DOC-SPLIT */
 console.log('\n元素与样式一致性');
 const defined = new Set();
 for (const m of css.matchAll(/\.(gm-[a-z0-9-]+)/g)) defined.add(m[1]);
