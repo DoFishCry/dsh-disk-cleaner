@@ -306,6 +306,30 @@ check('正在解释的条目显示加载中图标', () => {
   if (!tiles.some((t) => String(t.props.className).includes('pending'))) throw new Error('树块没有解释中状态');
 });
 
+check('会话计划显示在 GM 右栏且是渲染后的文档（不是 Markdown 源码）', () => {
+  mock.reset();
+  runtimeMain({});
+  seed('snapshot', { config: { workers: 3 }, quickPaths: [], targets: [{ id: 't1', label: '/', path: '/root', usage: null }], scans: {}, run: null });
+  seed('targetId', 't1');
+  seed('currentPath', '/root');
+  seed('listing', { path: '/root', risk: 'caution', note: '', dirCount: 0, fileCount: 0, truncated: false, total: 0, children: [] });
+  seed('sessionPlanState', {
+    planId: 'plan-demo', sessionId: 'session-demo', planPath: '/w/.garbage-master/plans/plan-demo.md',
+    planSource: 'file', totals: { count: 1, bytes: 40200000 }, workspace: { path: '/w', title: 'w' },
+    planMode: { ok: false, degraded: true, reason: 'no-plan-mode' },
+    markdown: '# 清理计划\n\n## 摘要\n\n- 预计释放 38 MB\n- 风险：低\n\n| 路径 | 处置 |\n|---|---|\n| `/a/__pycache__` | 删除 |\n'
+  });
+  mock.replay();
+  const rendered = runtimeMain({});
+  const cards = collectByClass(rendered, 'gm-card--plan');
+  if (cards.length === 0) throw new Error('右栏没有渲染计划卡片（gm-card--plan）');
+  const text = JSON.stringify(rendered);
+  if (!text.includes('清理计划') || !text.includes('摘要') || !text.includes('预计释放 38 MB')) throw new Error('计划正文没有被渲染');
+  if (text.includes('# 清理计划')) throw new Error('计划显示成了 Markdown 源码（未渲染）');
+  // 右栏此时应只显示计划，不显示"当前位置/本层条目"
+  if (collectByClass(rendered, 'gm-col-inner').length > 0) throw new Error('计划与浏览卡片同时显示了（右栏应切换）');
+});
+
 check('令牌过期时渲染顶部横幅（含刷新按钮）', () => {
   mock.reset();
   runtimeMain({});
